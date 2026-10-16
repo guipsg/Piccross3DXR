@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { attribute, texture, uv, vec2, vec3, float, floor, mix, color, uniform, select, sin, time, positionWorld, max, smoothstep, min } from 'three/tsl';
 
 const COLS = 8, ROWS = 4, TILE = 128;
+const DYN = 10; // floats por instância no buffer dinâmico
 
 function makeAtlas() {
   const cv = document.createElement('canvas');
@@ -68,7 +69,11 @@ export class Board {
     const clue = attribute('iClue', 'vec3');
     const st = attribute('iState', 'vec4'); // x pintado, y hover, z erro(flash)
     const revealCol = attribute('iColor', 'vec3');
-    const tile = select(faceAxis.lessThan(0.5), clue.x, select(faceAxis.lessThan(1.5), clue.y, clue.z));
+    const doneV = attribute('iDone', 'vec3'); // linha resolvida, por eixo
+    const lineV = attribute('iLine', 'vec3'); // linha do cubo sob a mira, por eixo
+    const pick = (v) => select(faceAxis.lessThan(0.5), v.x, select(faceAxis.lessThan(1.5), v.y, v.z));
+    const tile = pick(clue);
+    const faceDone = pick(doneV), faceLine = pick(lineV);
     const row = floor(tile.add(0.5).div(COLS));
     const col = tile.sub(row.mul(COLS));
     const fuv = uv().mul(0.94).add(0.03);
@@ -80,8 +85,10 @@ export class Board {
     const cream = mix(color(0xf4ead6), color(0x9eeeff), h), paintCol = mix(color(0x6fb2ff), color(0xffb46b), h);
     const ink = mix(color(0x2a2430), color(0x042033), h), inkPainted = mix(color(0x0f2a52), color(0x3a1600), h);
     const edgeDark = edge.mul(mix(float(0.38), float(0.1), h));
-    const base = mix(cream, paintCol, st.x).mul(float(1).sub(edgeDark)).add(st.y.mul(0.16));
-    const inked = mix(base, mix(ink, inkPainted, st.x), glyph.mul(float(1).sub(this.reveal)));
+    const lineTint = mix(color(0xffc890), color(0xffffff), h);
+    const base = mix(cream, paintCol, st.x).mul(float(1).sub(edgeDark)).add(st.y.mul(0.16)).add(lineTint.mul(faceLine.mul(0.16)));
+    // dica de linha resolvida: o número esmaece (fica "cinza")
+    const inked = mix(base, mix(ink, inkPainted, st.x), glyph.mul(float(1).sub(this.reveal)).mul(float(1).sub(faceDone.mul(0.72))));
     const flashed = mix(inked, color(0xff3b3b), st.z.mul(0.85));
     const revealed = revealCol.mul(float(1).sub(edge.mul(0.3)));
     const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.62, metalness: 0.0 });
@@ -90,7 +97,7 @@ export class Board {
     const scan = sin(positionWorld.y.mul(700).sub(time.mul(5))).mul(0.5).add(0.5).pow(6);
     const flicker = sin(time.mul(37)).mul(sin(time.mul(23))).mul(0.03).add(1);
     const holoGlow = color(0x3fd9ff).mul(edge.mul(0.9).add(scan.mul(0.12))).mul(flicker).mul(h).mul(float(1).sub(glyph.mul(0.8)));
-    mat.emissiveNode = vec3(st.y.mul(0.05)).add(color(0xff2020).mul(st.z.mul(0.25))).add(holoGlow);
+    mat.emissiveNode = vec3(st.y.mul(0.05)).add(lineTint.mul(faceLine.mul(0.06))).add(color(0xff2020).mul(st.z.mul(0.25))).add(holoGlow);
     return mat;
   }
 
@@ -133,13 +140,22 @@ export class Board {
     const fa = new Float32Array(24);
     for (let f = 0; f < 6; f++) for (let v = 0; v < 4; v++) fa[f * 4 + v] = f >> 1;
     geo.setAttribute('faceAxis', new THREE.BufferAttribute(fa, 1));
-    const clue = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) for (let a = 0; a < 3; a++) clue[i * 3 + a] = puzzle.tileFor(i, a);
-    geo.setAttribute('iClue', new THREE.InstancedBufferAttribute(clue, 3));
-    this.stateAttr = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4);
-    this.stateAttr.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('iState', this.stateAttr);
-    geo.setAttribute('iColor', new THREE.InstancedBufferAttribute(puzzle.colors, 3));
+    // Atributos por instância em 2 buffers intercalados: o WebGPU limita a 8 vertex buffers por malha.
+    // estático (6): dica x/y/z + cor da revelação
+    const stat = new Float32Array(N * 6);
+    for (let i = 0; i < N; i++) {
+      for (let a = 0; a < 3; a++) stat[i * 6 + a] = puzzle.tileFor(i, a);
+      stat.set(puzzle.colors.subarray(i * 3, i * 3 + 3), i * 6 + 3);
+    }
+    const sbuf = new THREE.InstancedInterleavedBuffer(stat, 6);
+    geo.setAttribute('iClue', new THREE.InterleavedBufferAttribute(sbuf, 3, 0));
+    geo.setAttribute('iColor', new THREE.InterleavedBufferAttribute(sbuf, 3, 3));
+    // dinâmico (10): estado (pintado, hover, erro, -) + linha resolvida x/y/z + linha sob a mira x/y/z
+    this.dyn = new THREE.InstancedInterleavedBuffer(new Float32Array(N * DYN), DYN);
+    this.dyn.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('iState', new THREE.InterleavedBufferAttribute(this.dyn, 4, 0));
+    geo.setAttribute('iDone', new THREE.InterleavedBufferAttribute(this.dyn, 3, 4));
+    geo.setAttribute('iLine', new THREE.InterleavedBufferAttribute(this.dyn, 3, 7));
 
     this.mesh = new THREE.InstancedMesh(geo, this.material, N);
     this.mesh.frustumCulled = false;
@@ -163,6 +179,26 @@ export class Board {
     this.slice = { axis: 0, depth: 0, sign: 1 };
     this.reveal.value = 0;
     this.hovered.clear();
+    this.lineDone = new Uint8Array(puzzle.lines.length);
+    for (let l = 0; l < puzzle.lines.length; l++) this.refreshLine(l);
+  }
+
+  // Linha resolvida = dica visível e só restam nela os cubos da forma (contagem bate).
+  refreshLine(l) {
+    const clue = this.puzzle.clues[l];
+    if (!clue || this.lineDone[l]) return false;
+    let left = 0;
+    for (const c of this.puzzle.lines[l].cells) left += 1 - this.removed[c];
+    if (left !== clue.count) return false;
+    this.lineDone[l] = 1;
+    return true;
+  }
+
+  // chamado ao quebrar um cubo; retorna quantas linhas acabaram de ser resolvidas
+  onRemoved(cell) {
+    let n = 0;
+    for (let a = 0; a < 3; a++) n += this.refreshLine(this.puzzle.cellLine[cell * 3 + a]) ? 1 : 0;
+    return n;
   }
 
   // repete a animação de "montagem" dos cubos (ex.: ao posicionar na mesa)
@@ -192,8 +228,13 @@ export class Board {
   update(dt, now) {
     if (!this.mesh) return;
     const { N } = this.puzzle;
-    const st = this.stateAttr.array;
+    const d = this.dyn.array;
+    const cl = this.puzzle.cellLine;
     const damp = Math.exp(-dt * 15);
+    const kDone = Math.min(1, dt * 5), kLine = Math.min(1, dt * 14);
+    // linhas que passam pelos cubos sob a mira
+    const hoverLines = new Set();
+    for (const h of this.hovered) for (let a = 0; a < 3; a++) hoverLines.add(cl[h * 3 + a]);
     for (let i = 0; i < N; i++) {
       const target = now < this.appearAt[i] || !this.isVisible(i) ? 0 : 1;
       if (target === 0 && this.removed[i]) {
@@ -204,19 +245,25 @@ export class Board {
         this.scale[i] = Math.max(0, this.scale[i] + this.vel[i] * dt);
       }
       const hov = this.hovered.has(i) ? 1 : 0;
-      st[i * 4] += (this.painted[i] - st[i * 4]) * Math.min(1, dt * 14);
-      st[i * 4 + 1] += (hov - st[i * 4 + 1]) * Math.min(1, dt * 20);
+      const o = i * DYN;
+      d[o] += (this.painted[i] - d[o]) * Math.min(1, dt * 14);
+      d[o + 1] += (hov - d[o + 1]) * Math.min(1, dt * 20);
       this.flash[i] = Math.max(0, this.flash[i] - dt * 1.6);
-      st[i * 4 + 2] = this.flash[i];
+      d[o + 2] = this.flash[i];
+      for (let a = 0; a < 3; a++) {
+        const l = cl[i * 3 + a];
+        d[o + 4 + a] += (this.lineDone[l] - d[o + 4 + a]) * kDone;
+        d[o + 7 + a] += ((hoverLines.has(l) ? 1 : 0) - d[o + 7 + a]) * kLine;
+      }
       const shake = Math.sin(now * 70 + i) * this.flash[i] * this.unit * 0.12;
-      const sc = this.scale[i] * (1 + st[i * 4 + 1] * 0.07);
+      const sc = this.scale[i] * (1 + d[o + 1] * 0.07);
       this._p.set(this.local[i * 3] + shake, this.local[i * 3 + 1], this.local[i * 3 + 2]);
       this._s.setScalar(sc < 0.002 ? 0 : sc);
       this._m.compose(this._p, this._q, this._s);
       this.mesh.setMatrixAt(i, this._m);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
-    this.stateAttr.needsUpdate = true;
+    this.dyn.needsUpdate = true;
   }
 
   // Raycast exato por DDA na grade (ignora cubos removidos/fatiados).

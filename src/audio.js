@@ -52,6 +52,7 @@ export const sfx = {
   paint(on) { tone(on ? 620 : 540, on ? 900 : 380, 0.08, 'sine', 0.16); },
   blocked() { tone(210, 190, 0.07, 'square', 0.05); },
   error() { tone(170, 90, 0.3, 'sawtooth', 0.13); tone(116, 70, 0.32, 'square', 0.07); },
+  line() { tone(880, 880, 0.12, 'sine', 0.09, 0.05); tone(1320, 1320, 0.18, 'sine', 0.08, 0.12); },
   ui() { tone(980, 1250, 0.045, 'sine', 0.1); },
   slice() { tone(720, 600, 0.05, 'triangle', 0.09); },
   win() {

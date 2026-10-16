@@ -149,6 +149,7 @@ function tryBreak(cell, src) {
   sfx.break();
   pulse(src, 0.45, 35);
   if (game.remaining === 0) win();
+  else if (board.onRemoved(cell)) sfx.line();
   return 'ok';
 }
 
