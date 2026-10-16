@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Picross 3D XR</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #1b1a26;
+      color: #f4efe6;
+      font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+      user-select: none;
+    }
+    canvas { display: block; touch-action: none; }
+    #hud {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      max-width: 300px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(18, 20, 32, 0.78);
+      border: 1px solid rgba(255, 200, 150, 0.18);
+      backdrop-filter: blur(12px);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    #hud h1 { margin: 0 0 6px; font-size: 16px; letter-spacing: 0.04em; }
+    #hud kbd {
+      display: inline-block;
+      padding: 0 5px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.12);
+      font: 12px ui-monospace, monospace;
+    }
+    #hud .muted { opacity: 0.65; }
+    #badge {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255, 195, 138, 0.16);
+      color: #ffc38a;
+      font-size: 11px;
+    }
+    #xr-buttons {
+      position: fixed;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      max-width: calc(100vw - 32px);
+    }
+    #xr-buttons #enter-ar { background: #7fe3ff; box-shadow: 0 8px 30px rgba(110, 210, 255, 0.35); }
+    #enter-vr, #enter-ar {
+      border: 0;
+      border-radius: 999px;
+      padding: 14px 28px;
+      background: #ffc38a;
+      color: #1b1a26;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 8px 30px rgba(255, 170, 110, 0.35);
+    }
+    #enter-vr:disabled { background: #4a4760; color: #b9b4cc; cursor: default; box-shadow: none; }
+    #error {
+      position: fixed; inset: 0; display: none; place-items: center;
+      padding: 24px; text-align: center; background: #1b1a26;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/build/three.webgpu.js",
+        "three/webgpu": "./vendor/three/build/three.webgpu.js",
+        "three/tsl": "./vendor/three/build/three.tsl.js",
+        "three/addons/": "./vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hud">
+    <h1>PICROSS 3D XR</h1>
+    Quebre todos os cubos que não fazem parte da forma escondida.<br />
+    <span class="muted">Número = quantos cubos sólidos há naquela linha. ◯ = em 2 grupos, ▢ = em 3+ grupos.</span><br /><br />
+    <kbd>Clique</kbd> quebrar/pintar (modo) · <kbd>Botão dir.</kbd> pintar<br />
+    <kbd>Arrastar</kbd> girar · <kbd>Roda</kbd> zoom · <kbd>Espaço</kbd> modo<br />
+    <kbd>Q</kbd>/<kbd>E</kbd> fatiar · <kbd>C</kbd> eixo do corte · <kbd>N</kbd> novo puzzle
+    <div id="badge">carregando…</div>
+  </div>
+  <div id="xr-buttons">
+    <button id="enter-vr" disabled>Verificando WebXR…</button>
+    <button id="enter-ar" hidden>Modo mesa (AR)</button>
+  </div>
+  <div id="error"></div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
