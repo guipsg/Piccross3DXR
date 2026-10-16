@@ -9,6 +9,7 @@ import { Particles } from './particles.js';
 import { buildEnvironment } from './environment.js';
 import { buildProjector, buildReticle, horizontalHit } from './ar.js';
 import { readPalm, pinchPoint } from './hands.js';
+import { Tutorial } from './tutorial.js';
 import { sfx, unlockAudio } from './audio.js';
 
 const UNIT = 0.055; // aresta do cubo em metros
@@ -58,11 +59,13 @@ projector.visible = false;
 stage.add(projector);
 const panel = new Panel();
 stage.add(panel.mesh);
+const tutorial = new Tutorial();
+stage.add(tutorial.mesh);
 const reticle = buildReticle();
 scene.add(reticle);
 const particles = new Particles(scene);
 
-const DESK_TARGET = new THREE.Vector3(-0.1, 1.2, -0.52);
+const DESK_TARGET = new THREE.Vector3(-0.1, 1.28, -0.52);
 function layoutVR(eyeY, floorBased = true) {
   // em 'local' a origem é a cabeça: sem clamp de altura e sem pedestal
   const y = floorBased ? THREE.MathUtils.clamp(eyeY - 0.42, 0.75, 1.45) : eyeY - 0.42;
@@ -75,6 +78,8 @@ function layoutVR(eyeY, floorBased = true) {
   stage.add(panel.mesh);
   panel.mesh.position.set(-0.36, y + 0.04, -0.46);
   panel.mesh.rotation.set(-0.22, 0.5, 0, 'YXZ');
+  tutorial.mesh.position.set(0.06, y + BUBBLE_R + 0.11, -0.6);
+  tutorial.mesh.rotation.set(-0.12, 0, 0);
 }
 function layoutAR() {
   // stage na superfície da mesa, +Z apontando para o jogador
@@ -85,9 +90,11 @@ function layoutAR() {
   stage.add(panel.mesh);
   panel.mesh.position.set(-0.4, 0.2, 0.06);
   panel.mesh.rotation.set(-0.35, 0.55, 0, 'YXZ');
+  tutorial.mesh.position.set(0, AR_LIFT + BUBBLE_R + 0.1, -0.03);
+  tutorial.mesh.rotation.set(-0.2, 0, 0);
 }
 function resetDesktopCamera() {
-  camera.position.set(-0.12, 1.56, 0.42);
+  camera.position.set(-0.12, 1.62, 0.6);
   camera.lookAt(DESK_TARGET);
 }
 layoutVR(1.62);
@@ -120,6 +127,7 @@ function setSlice(axis, depth, sign = board.slice.sign) {
   if (axis === s.axis && depth === s.depth && sign === s.sign) return;
   if (depth !== s.depth || axis !== s.axis) sfx.slice();
   board.slice = { axis, depth, sign };
+  if (depth > 0) tutorial.event('slice');
 }
 const cycleAxis = () => setSlice((board.slice.axis + 1) % 3, board.slice.depth);
 const nudgeSlice = (d) => setSlice(board.slice.axis, board.slice.depth + d);
@@ -150,6 +158,7 @@ function tryBreak(cell, src) {
   pulse(src, 0.45, 35);
   if (game.remaining === 0) win();
   else if (board.onRemoved(cell)) sfx.line();
+  tutorial.event('break');
   return 'ok';
 }
 
@@ -157,6 +166,7 @@ function setPaint(cell, value, src) {
   if (board.painted[cell] === value) return;
   board.painted[cell] = value;
   sfx.paint(!!value);
+  if (value) tutorial.event('paint');
   pulse(src, 0.2, 20);
 }
 
@@ -261,6 +271,8 @@ function castRay(origin, dir) {
   const cube = anchor.visible && !game.solved ? board.raycast(origin, dir) : null;
   raycaster.set(origin, dir);
   const ph = panel.mesh.visible ? raycaster.intersectObject(panel.mesh, false)[0] : null;
+  const th = tutorial.mesh.visible ? raycaster.intersectObject(tutorial.mesh, false)[0] : null;
+  if (th && (!ph || th.distance < ph.distance) && (!cube || th.distance < cube.dist)) return { type: 'tip', btn: tutorial.hit(th.uv), dist: th.distance };
   if (ph && (!cube || ph.distance < cube.dist)) return { type: 'panel', btn: panel.hit(ph.uv), dist: ph.distance };
   if (cube) return { type: 'cube', ...cube };
   const bt = anchor.visible ? bubble.intersect(origin, dir) : null;
@@ -276,6 +288,7 @@ function panelAction(btn) {
   else if (btn === 'plus') nudgeSlice(1);
   else if (btn === 'new') { sfx.ui(); newGame(); }
   else if (btn === 'move') { sfx.ui(); beginPlacing(); }
+  else if (btn === 'help') { sfx.ui(); tutorial.start(anchor.quaternion); }
 }
 
 function applyStroke(src, cell) {
@@ -316,6 +329,7 @@ function press(src, kind) {
   }
   const hit = pressHit(src);
   if (hit?.type === 'panel') { panelAction(hit.btn); return; }
+  if (hit?.type === 'tip') { if (hit.btn === 'skip') { sfx.ui(); tutorial.finish(); } return; }
   if (hit?.type === 'cube') {
     const paint = kind === 'secondary' || game.mode === 'paint';
     src.stroke = { kind: paint ? 'paint' : 'break', value: paint ? 1 - board.painted[hit.cell] : 0, start: hit.cell, last: null, axis: -1 };
@@ -358,6 +372,7 @@ addEventListener('keydown', (e) => {
   else if (e.code === 'KeyC') cycleAxis();
   else if (e.code === 'KeyF') setSlice(board.slice.axis, board.slice.depth, -board.slice.sign);
   else if (e.code === 'KeyN') newGame();
+  else if (e.code === 'KeyT') tutorial.start(anchor.quaternion);
   else if (e.code === 'KeyR') { resetDesktopCamera(); anchor.quaternion.copy(defaultOrientation); angVel.set(0, 0, 0); }
 });
 function updateMouseRay() {
@@ -636,7 +651,8 @@ function fitToWindow() {
 addEventListener('resize', fitToWindow);
 
 newGame(parseInt(params.get('seed')) || randomSeed());
-window.picross = { game, board, tryBreak, newGame }; // hook de debug no console
+window.picross = { game, board, tryBreak, setPaint, setSlice, newGame, tutorial }; // hook de debug no console
+if (tutorial.shouldAutoStart()) tutorial.start(anchor.quaternion);
 
 const spinQ = new THREE.Quaternion();
 renderer.setAnimationLoop(() => {
@@ -656,11 +672,13 @@ renderer.setAnimationLoop(() => {
     updateMouseRay();
     mouse.hit = mouse.grab ? null : castRay(mouse.origin, mouse.dir);
     if (mouse.grab?.type === 'arc') updateArc(mouse, dt);
-    canvas.style.cursor = mouse.grab ? 'grabbing' : mouse.hit?.type === 'cube' || mouse.hit?.type === 'panel' ? 'pointer' : 'grab';
+    canvas.style.cursor = mouse.grab ? 'grabbing' : ['cube', 'panel', 'tip'].includes(mouse.hit?.type) ? 'pointer' : 'grab';
   } else mouse.hit = null;
   for (const s of sources) if (s.kind === 'xr') updateXRSource(s, dt);
   let bubbleHover = 0;
+  tutorial.hover = null;
   for (const s of sources) {
+    if (s.hit?.type === 'tip') tutorial.hover = s.hit.btn;
     if (s.hit?.type === 'cube') { board.hovered.add(s.hit.cell); if (s.stroke) applyStroke(s, s.hit.cell); }
     if (s.hit?.type === 'panel' && s.hit.btn) panel.hover = s.hit.btn;
     if (s.hit?.type === 'bubble') bubbleHover = 1;
@@ -692,6 +710,7 @@ renderer.setAnimationLoop(() => {
   env.update(t);
 
   const hands = sources.some(isHand);
+  tutorial.update(anchor.quaternion, !inXR ? 'desktop' : hands ? 'hands' : 'controllers', placing || game.solved);
   const state = {
     seed: game.seed, time: elapsed(), mistakes: game.mistakes, remaining: game.remaining, solved: game.solved,
     stars: game.mistakes === 0 ? 3 : game.mistakes <= 2 ? 2 : 1, mode: game.mode,

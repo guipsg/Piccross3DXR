@@ -58,6 +58,12 @@ sem hit-test, ele posiciona 45 cm abaixo dos olhos, à sua frente.
 
 Segurar e arrastar aplica a ação ao longo de uma única linha, como no original.
 
+**Ajudas visuais:** quando numa linha com dica visível só restam os cubos da forma, o número dela esmaece.
+Ao mirar um cubo, as faces com as dicas das três linhas que passam por ele ficam realçadas.
+
+**Tutorial:** aparece no primeiro uso, com 4 passos (girar, quebrar, pintar, cortar) que avançam quando
+você faz a ação e se adaptam a mãos, controles ou mouse. Refaça pelo botão **?** do painel (ou tecla T).
+
 ## Regras
 
 - O número na face é quantos cubos da forma existem na linha que atravessa aquela face.

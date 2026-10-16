@@ -75,7 +75,8 @@ export class Panel {
     g.font = '800 50px system-ui, sans-serif';
     g.fillText('PICROSS 3D', 48, 66);
     g.fillStyle = '#ffc38a'; g.font = '600 26px system-ui, sans-serif'; g.textAlign = 'right';
-    g.fillText(`seed ${s.seed}`, W - 48, 68);
+    g.fillText(`seed ${s.seed}`, W - 130, 68);
+    if (!s.placing) this.button('help', W - 112, 30, 72, 72, '?', null, { size: 44, weight: 800 });
 
     if (s.placing) {
       g.textAlign = 'center';
