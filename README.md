@@ -4,6 +4,11 @@ Mini-game estilo Picross 3D em WebXR, renderizado com o `WebGPURenderer` do thre
 Um nível procedural por seed: a forma escondida é gerada, e o solver garante que ela tenha
 **solução única só com lógica de linhas** antes de esconder parte das dicas.
 
+## Jogar online
+
+**https://guipsg.github.io/Piccross3DXR/** — abra no Quest Browser (ou no desktop) e toque em **Entrar no VR**
+ou **Modo mesa (AR)**. Servido por HTTPS pelo GitHub Pages, então não precisa de cabo nem de servidor local.
+
 ## Rodar localmente
 
 Não precisa de build, Node nem internet: o three.js 0.180.0 e os modelos de mãos/controles
