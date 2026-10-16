@@ -14,11 +14,14 @@ export class Bubble {
     mat.colorNode = mix(color(0x7fe3ff), color(0xffd2a8), this.grab);
     mat.opacityNode = fres.mul(float(0.22).add(this.hover.mul(0.35)).add(this.grab.mul(0.3)))
       .add(lines.mul(float(0.035).add(this.hover.mul(0.1)).add(this.grab.mul(0.12))));
-    this.mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 24), mat);
+    this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), mat);
+    this.mesh.scale.setScalar(radius);
     this.mesh.renderOrder = 10;
     this._c = new THREE.Vector3();
     this._oc = new THREE.Vector3();
   }
+
+  setRadius(r) { this.radius = r; this.mesh.scale.setScalar(r); }
 
   center(out = this._c) { return this.mesh.getWorldPosition(out); }
 

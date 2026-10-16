@@ -14,10 +14,31 @@ import { sfx, unlockAudio } from './audio.js';
 
 const UNIT = 0.055; // aresta do cubo em metros
 const params = new URLSearchParams(location.search);
-const SIZE = Math.min(7, Math.max(3, parseInt(params.get('size')) || 5));
-const BUBBLE_R = UNIT * SIZE * 0.866 + 0.025; // envolve o cubo inteiro com folga
-const AR_LIFT = BUBBLE_R + 0.035; // altura do centro do puzzle acima da mesa
 const now = () => performance.now() / 1000;
+
+// ---------- Preferências e progresso (localStorage; o jogo funciona sem ele) ----------
+const SETTINGS_KEY = 'picross3dxr.settings', SAVE_KEY = 'picross3dxr.save';
+const storage = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } },
+  del(k) { try { localStorage.removeItem(k); } catch { /* sem storage */ } },
+};
+const settings = { size: 5, diff: 'normal', hand: 'right', symbols: false, ...(storage.get(SETTINGS_KEY) ?? {}) };
+if (params.get('size')) settings.size = Math.min(7, Math.max(3, parseInt(params.get('size')) || 5));
+const saveSettings = () => storage.set(SETTINGS_KEY, settings);
+const HIDE = { easy: 0.25, normal: 0.4, hard: 1 }; // fração de dicas escondidas (1 = o máximo possível)
+
+// o puzzle diário é igual para todos: semente derivada da data, tamanho e dificuldade fixos
+function dailyPuzzle() {
+  const d = new Date();
+  let h = 2166136261;
+  for (const ch of `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return { seed: ((h >>> 0) % 99999) + 1, label: `${d.getDate()}/${d.getMonth() + 1}` };
+}
+
+// raio da bolha e altura sobre a mesa dependem do tamanho do puzzle
+let BUBBLE_R = 0, AR_LIFT = 0;
+const bubbleRadius = (n) => UNIT * n * 0.866 + 0.025;
 const randomSeed = () => Math.floor(Math.random() * 99999) + 1;
 
 // ---------- Renderer ----------
@@ -51,7 +72,13 @@ const anchor = new THREE.Group(); // pivô de rotação do puzzle
 stage.add(anchor);
 const board = new Board(UNIT);
 anchor.add(board.group);
-const bubble = new Bubble(BUBBLE_R);
+const bubble = new Bubble(bubbleRadius(settings.size));
+function applySize(n) {
+  BUBBLE_R = bubbleRadius(n);
+  AR_LIFT = BUBBLE_R + 0.035;
+  bubble.setRadius(BUBBLE_R);
+}
+applySize(settings.size);
 anchor.add(bubble.mesh);
 stage.add(env.pedestal);
 const projector = buildProjector();
@@ -66,7 +93,9 @@ scene.add(reticle);
 const particles = new Particles(scene);
 
 const DESK_TARGET = new THREE.Vector3(-0.1, 1.28, -0.52);
+let lastEyeY = 1.62;
 function layoutVR(eyeY, floorBased = true) {
+  lastEyeY = eyeY;
   // em 'local' a origem é a cabeça: sem clamp de altura e sem pedestal
   const y = floorBased ? THREE.MathUtils.clamp(eyeY - 0.42, 0.75, 1.45) : eyeY - 0.42;
   env.pedestal.visible = floorBased;
@@ -101,20 +130,68 @@ layoutVR(1.62);
 resetDesktopCamera();
 
 // ---------- Estado do jogo ----------
-const game = { puzzle: null, seed: 0, mode: 'break', mistakes: 0, remaining: 0, start: null, end: null, solved: false, revealT: 0 };
+const game = { puzzle: null, seed: 0, daily: null, size: 5, hide: 0.4, mode: 'break', mistakes: 0, remaining: 0, start: null, end: null, solved: false, revealT: 0 };
+const undoStack = []; // traços de pintura, para DESFAZER
+let panelPage = 'main';
+let saveDirty = false, lastSave = 0;
+const markDirty = () => { saveDirty = true; };
 const defaultOrientation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.42, -0.62, 0, 'XYZ'));
 const angVel = new THREE.Vector3(); // inércia da rotação (rad/s, eixo em mundo)
 
-function newGame(seed = randomSeed()) {
-  const p = new Puzzle(seed, SIZE, SIZE, SIZE);
-  Object.assign(game, { puzzle: p, seed, mistakes: 0, start: null, end: null, solved: false, revealT: 0 });
-  game.remaining = p.N - p.solidCount;
+function newGame(seed = randomSeed(), { daily = null, size = settings.size, hide = HIDE[settings.diff], restore = null } = {}) {
+  const p = new Puzzle(seed, size, size, size, hide);
+  applySize(size);
+  Object.assign(game, { puzzle: p, seed, daily, size, hide, mistakes: 0, start: null, end: null, solved: false, revealT: 0 });
   board.load(p, now());
+  undoStack.length = 0;
+  if (restore && restore.removed?.length === p.N) {
+    // retoma: cubos quebrados/pintados, erros e tempo
+    for (let i = 0; i < p.N; i++) { board.removed[i] = +restore.removed[i]; board.painted[i] = +restore.painted[i]; }
+    for (let l = 0; l < p.lines.length; l++) board.refreshLine(l);
+    game.mistakes = restore.mistakes | 0;
+    game.mode = restore.mode === 'paint' ? 'paint' : 'break';
+    if (restore.elapsed > 0) game.start = now() - restore.elapsed;
+  }
+  game.remaining = 0;
+  for (let i = 0; i < p.N; i++) if (!p.solution[i] && !board.removed[i]) game.remaining++;
   anchor.quaternion.copy(defaultOrientation);
   angVel.set(0, 0, 0);
+  relayout();
   const url = new URL(location.href);
   url.searchParams.set('seed', seed);
   history.replaceState(null, '', url);
+  markDirty();
+}
+
+// reposiciona tudo para o tamanho atual (a bolha muda de raio com o tamanho)
+function relayout() {
+  if (xrMode === 'ar') { if (arState === 'placed') layoutAR(); }
+  else layoutVR(lastEyeY, xrFloor);
+}
+
+function saveGame() {
+  if (!game.puzzle) return;
+  if (game.solved) { storage.del(SAVE_KEY); return; }
+  storage.set(SAVE_KEY, {
+    v: 1, seed: game.seed, size: game.size, hide: game.hide, daily: game.daily, mode: game.mode,
+    removed: Array.from(board.removed).join(''), painted: Array.from(board.painted).join(''),
+    mistakes: game.mistakes, elapsed: elapsed(),
+  });
+}
+
+function undo() {
+  const changes = undoStack.pop();
+  if (!changes) { sfx.blocked(); return; }
+  for (let k = changes.length - 1; k >= 0; k--) board.painted[changes[k].cell] = changes[k].prev;
+  sfx.paint(false);
+  markDirty();
+}
+
+function recenter() {
+  sfx.ui();
+  if (xrMode === 'vr') recenterVR();
+  else if (xrMode === 'ar') beginPlacing();
+  else { resetDesktopCamera(); anchor.quaternion.copy(defaultOrientation); angVel.set(0, 0, 0); }
 }
 
 const elapsed = () => (game.start === null ? 0 : (game.end ?? now()) - game.start);
@@ -142,6 +219,7 @@ const HOLO_SHARDS = [0x9eeeff, 0x5fd8ff, 0xffffff];
 
 function tryBreak(cell, src) {
   if (game.start === null) game.start = now();
+  markDirty();
   if (board.painted[cell]) { sfx.blocked(); board.flash[cell] = Math.max(board.flash[cell], 0.15); return 'blocked'; }
   if (game.puzzle.solution[cell]) {
     game.mistakes++;
@@ -164,7 +242,9 @@ function tryBreak(cell, src) {
 
 function setPaint(cell, value, src) {
   if (board.painted[cell] === value) return;
+  src?.stroke?.changes?.push({ cell, prev: board.painted[cell] });
   board.painted[cell] = value;
+  markDirty();
   sfx.paint(!!value);
   if (value) tutorial.event('paint');
   pulse(src, 0.2, 20);
@@ -177,6 +257,7 @@ function win() {
   board.painted.fill(0);
   board.hovered.clear();
   sfx.win();
+  storage.del(SAVE_KEY);
   const c = board.group.getWorldPosition(new THREE.Vector3());
   particles.burst(c, [0xffc38a, 0xff7a8a, 0x7fd1ff, 0xb7f27a, 0xffe36e, 0xc59bff], 160, { speed: 1.1, size: 0.014, life: 2.2, up: 0.8, gravity: 1.4 });
   for (const s of sources) pulse(s, 0.7, 260);
@@ -289,6 +370,22 @@ function panelAction(btn) {
   else if (btn === 'new') { sfx.ui(); newGame(); }
   else if (btn === 'move') { sfx.ui(); beginPlacing(); }
   else if (btn === 'help') { sfx.ui(); tutorial.start(anchor.quaternion); }
+  else if (btn === 'undo') undo();
+  else if (btn === 'options') { sfx.ui(); panelPage = 'options'; }
+  else if (btn === 'back') { sfx.ui(); panelPage = 'main'; }
+  else if (btn === 'recenter') { recenter(); panelPage = 'main'; }
+  else if (btn === 'daily') { sfx.ui(); const d = dailyPuzzle(); newGame(d.seed, { daily: d.label, size: 5, hide: HIDE.normal }); panelPage = 'main'; }
+  else if (btn.includes(':')) {
+    // escolhas da tela de opções: chave:valor
+    const [k, v] = btn.split(':');
+    if (k === 'size') settings.size = +v;
+    else if (k === 'diff') settings.diff = v;
+    else if (k === 'hand') settings.hand = v;
+    else if (k === 'symbols') settings.symbols = v === 'on';
+    board.symbols.value = settings.symbols ? 1 : 0;
+    saveSettings();
+    sfx.ui();
+  }
 }
 
 function applyStroke(src, cell) {
@@ -332,14 +429,18 @@ function press(src, kind) {
   if (hit?.type === 'tip') { if (hit.btn === 'skip') { sfx.ui(); tutorial.finish(); } return; }
   if (hit?.type === 'cube') {
     const paint = kind === 'secondary' || game.mode === 'paint';
-    src.stroke = { kind: paint ? 'paint' : 'break', value: paint ? 1 - board.painted[hit.cell] : 0, start: hit.cell, last: null, axis: -1 };
+    src.stroke = { kind: paint ? 'paint' : 'break', value: paint ? 1 - board.painted[hit.cell] : 0, start: hit.cell, last: null, axis: -1, changes: [] };
     applyStroke(src, hit.cell);
     return;
   }
   // bolha pelo raio (mouse/controle também giram clicando fora dela)
   if (anchor.visible && (hit?.type === 'bubble' || !isHand(src))) startArc(src, bubble.pointDir(src.origin, src.dir, tmpV), false);
 }
-function release(src) { src.stroke = null; if (src.grab?.viaPress) src.grab = null; }
+function release(src) {
+  if (src.stroke?.changes?.length) { undoStack.push(src.stroke.changes); if (undoStack.length > 60) undoStack.shift(); }
+  src.stroke = null;
+  if (src.grab?.viaPress) src.grab = null;
+}
 
 // mouse
 const yAxis = new THREE.Vector3(0, 1, 0);
@@ -373,6 +474,7 @@ addEventListener('keydown', (e) => {
   else if (e.code === 'KeyF') setSlice(board.slice.axis, board.slice.depth, -board.slice.sign);
   else if (e.code === 'KeyN') newGame();
   else if (e.code === 'KeyT') tutorial.start(anchor.quaternion);
+  else if (e.code === 'KeyZ' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undo(); }
   else if (e.code === 'KeyR') { resetDesktopCamera(); anchor.quaternion.copy(defaultOrientation); angVel.set(0, 0, 0); }
 });
 function updateMouseRay() {
@@ -405,7 +507,8 @@ for (let i = 0; i < 2; i++) {
     src.inputSource = null; ray.visible = false; cursor.visible = false; src.stroke = src.grab = null;
     src.hitSource?.cancel(); src.hitSource = null;
   });
-  controller.addEventListener('selectstart', () => press(src, isHand(src) && src.inputSource.handedness === 'left' ? 'secondary' : 'primary'));
+  // mãos: a pinça da mão dominante faz a ação do modo; a da outra mão pinta
+  controller.addEventListener('selectstart', () => press(src, isHand(src) && src.inputSource.handedness !== settings.hand ? 'secondary' : 'primary'));
   controller.addEventListener('selectend', () => release(src));
   controller.addEventListener('squeezestart', () => {
     // grip do controle: gira acompanhando o pulso
@@ -634,6 +737,7 @@ resetButtons();
 // Ao entrar no VR, posiciona a mesa à frente da cabeça do jogador (em pé ou sentado).
 function recenterVR() {
   readHead();
+  lastEyeY = headPos.y;
   stage.position.set(headPos.x, 0, headPos.z);
   stage.rotation.set(0, Math.atan2(-headDir.x, -headDir.z), 0);
   layoutVR(headPos.y, xrFloor);
@@ -650,8 +754,16 @@ function fitToWindow() {
 }
 addEventListener('resize', fitToWindow);
 
-newGame(parseInt(params.get('seed')) || randomSeed());
-window.picross = { game, board, tryBreak, setPaint, setSlice, newGame, tutorial }; // hook de debug no console
+board.symbols.value = settings.symbols ? 1 : 0;
+{
+  // retoma o puzzle salvo, a menos que a URL peça outra seed
+  const saved = storage.get(SAVE_KEY), urlSeed = parseInt(params.get('seed'));
+  if (saved?.v === 1 && (!urlSeed || urlSeed === saved.seed)) newGame(saved.seed, { daily: saved.daily, size: saved.size, hide: saved.hide, restore: saved });
+  else newGame(urlSeed || randomSeed());
+}
+addEventListener('pagehide', saveGame);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveGame(); });
+window.picross = { game, board, tryBreak, setPaint, setSlice, newGame, tutorial, panelAction, undo, release }; // hook de debug no console
 if (tutorial.shouldAutoStart()) tutorial.start(anchor.quaternion);
 
 const spinQ = new THREE.Quaternion();
@@ -709,16 +821,23 @@ renderer.setAnimationLoop(() => {
   particles.update(dt);
   env.update(t);
 
+  // salva no máximo 2x/s; com o relógio correndo, a cada 5 s
+  if (!saveDirty && game.start !== null && !game.solved && t - lastSave > 5) saveDirty = true;
+  if (saveDirty && t - lastSave > 0.5) { saveGame(); saveDirty = false; lastSave = t; }
+
   const hands = sources.some(isHand);
+  tutorial.leftHanded = settings.hand === 'left';
   tutorial.update(anchor.quaternion, !inXR ? 'desktop' : hands ? 'hands' : 'controllers', placing || game.solved);
   const state = {
+    seedLabel: game.daily ? `diário ${game.daily}` : `seed ${game.seed}`, page: panelPage, settings, daily: !!game.daily,
+    canUndo: undoStack.length > 0,
     seed: game.seed, time: elapsed(), mistakes: game.mistakes, remaining: game.remaining, solved: game.solved,
     stars: game.mistakes === 0 ? 3 : game.mistakes <= 2 ? 2 : 1, mode: game.mode,
     sliceAxis: board.slice.axis, sliceDepth: board.slice.depth, sliceSign: board.slice.sign,
     sliceMax: game.puzzle.dims()[board.slice.axis] - 1, palmActive,
     ar: xrMode === 'ar', placing, hitTest: hitTestAvailable,
     hint: !inXR ? 'Clique: ação · Dir.: pintar · Arraste: girar a bolha · Q/E: fatiar · F: lado do corte'
-      : hands ? `Pinça dir.: ${game.mode === 'break' ? 'quebrar' : 'pintar'} · esq.: pintar · Palma aberta: cortar · Pinça na bolha: girar`
+      : hands ? `Pinça ${settings.hand === 'right' ? 'dir.' : 'esq.'}: ${game.mode === 'break' ? 'quebrar' : 'pintar'} · ${settings.hand === 'right' ? 'esq.' : 'dir.'}: pintar · Palma aberta: cortar · Pinça na bolha: girar`
       : 'Gatilho: ação · A/X: pintar · Gatilho na bolha ou Grip: girar · Analógico: fatiar',
   };
   const key = JSON.stringify({ ...state, time: Math.floor(state.time), hover: panel.hover });

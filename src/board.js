@@ -1,7 +1,7 @@
 // Representação visual do puzzle: um único InstancedMesh com material TSL.
 // As dicas vêm de um atlas (R = glifo, G = borda) indexado por atributos por instância.
 import * as THREE from 'three';
-import { attribute, texture, uv, vec2, vec3, float, floor, mix, color, uniform, select, sin, time, positionWorld, max, smoothstep, min } from 'three/tsl';
+import { attribute, texture, uv, vec2, vec3, float, floor, fract, step, mix, color, uniform, select, sin, time, positionWorld, max, smoothstep, min } from 'three/tsl';
 
 const COLS = 8, ROWS = 4, TILE = 128;
 const DYN = 10; // floats por instância no buffer dinâmico
@@ -49,6 +49,7 @@ export class Board {
     this.reveal = uniform(0);
     this.holo = uniform(0); // 0 = cubos "de papel" (VR), 1 = holograma (AR)
     this.sliceGlow = uniform(0);
+    this.symbols = uniform(0); // 1 = listras nos cubos pintados (não depender só da cor)
     this.mesh = null;
     this.slice = { axis: 0, depth: 0, sign: 1 };
     this.slicePlane = this.makeSlicePlane();
@@ -86,7 +87,9 @@ export class Board {
     const ink = mix(color(0x2a2430), color(0x042033), h), inkPainted = mix(color(0x0f2a52), color(0x3a1600), h);
     const edgeDark = edge.mul(mix(float(0.38), float(0.1), h));
     const lineTint = mix(color(0xffc890), color(0xffffff), h);
-    const base = mix(cream, paintCol, st.x).mul(float(1).sub(edgeDark)).add(st.y.mul(0.16)).add(lineTint.mul(faceLine.mul(0.16)));
+    const stripes = step(0.5, fract(uv().x.sub(uv().y).mul(4))).mul(st.x).mul(this.symbols).mul(0.22);
+    const base = mix(cream, paintCol, st.x).mul(float(1).sub(edgeDark)).mul(float(1).sub(stripes))
+      .add(st.y.mul(0.16)).add(lineTint.mul(faceLine.mul(0.16)));
     // dica de linha resolvida: o número esmaece (fica "cinza")
     const inked = mix(base, mix(ink, inkPainted, st.x), glyph.mul(float(1).sub(this.reveal)).mul(float(1).sub(faceDone.mul(0.72))));
     const flashed = mix(inked, color(0xff3b3b), st.z.mul(0.85));

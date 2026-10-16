@@ -64,6 +64,21 @@ Ao mirar um cubo, as faces com as dicas das três linhas que passam por ele fica
 **Tutorial:** aparece no primeiro uso, com 4 passos (girar, quebrar, pintar, cortar) que avançam quando
 você faz a ação e se adaptam a mãos, controles ou mouse. Refaça pelo botão **?** do painel (ou tecla T).
 
+## Opções e progresso
+
+O botão **OPÇÕES** do painel abre:
+
+- **Tamanho** (4 a 7) e **dificuldade**: Fácil esconde 25% das dicas, Normal 40%, e Difícil esconde o
+  máximo possível e escolhe, entre 5 candidatos, o que exige mais rodadas de dedução. Sempre com solução
+  única por lógica. Valem a partir do próximo puzzle.
+- **Mão dominante** (destro/canhoto): troca qual pinça quebra e qual pinta.
+- **Símbolos (cores)**: listras nos cubos pintados, para não depender só do azul.
+- **Puzzle do dia**: a mesma seed para todos, derivada da data (tamanho 5, Normal).
+- **Recentralizar**: recoloca o puzzle à sua frente (VR), reposiciona na mesa (AR) ou reseta a câmera.
+
+**DESFAZER** (ou Ctrl+Z) volta o último traço de pintura. O progresso (cubos, pintura, erros e tempo) é
+salvo no navegador e retomado ao reabrir a página; `?seed=` na URL com outra seed começa um puzzle novo.
+
 ## Regras
 
 - O número na face é quantos cubos da forma existem na linha que atravessa aquela face.

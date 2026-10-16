@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 
 const W = 1024, H = 760;
+const SELECTED = { base: '#ffc38a', hover: '#ffd6ad', text: '#1b1a26' };
+const DISABLED = { base: 'rgba(255,255,255,0.04)', hover: 'rgba(255,255,255,0.06)', text: 'rgba(244,239,230,0.3)' };
 
 function star(g, cx, cy, r, filled) {
   g.beginPath();
@@ -75,7 +77,7 @@ export class Panel {
     g.font = '800 50px system-ui, sans-serif';
     g.fillText('PICROSS 3D', 48, 66);
     g.fillStyle = '#ffc38a'; g.font = '600 26px system-ui, sans-serif'; g.textAlign = 'right';
-    g.fillText(`seed ${s.seed}`, W - 130, 68);
+    g.fillText(s.seedLabel, W - 130, 68);
     if (!s.placing) this.button('help', W - 112, 30, 72, 72, '?', null, { size: 44, weight: 800 });
 
     if (s.placing) {
@@ -91,10 +93,20 @@ export class Panel {
       return;
     }
 
+    if (s.page === 'options') { this.drawOptions(s); this.tex.needsUpdate = true; return; }
+
     const mm = Math.floor(s.time / 60), ss = Math.floor(s.time % 60);
     this.stat(40, 'TEMPO', `${mm}:${String(ss).padStart(2, '0')}`);
     this.stat(364, 'ERROS', String(s.mistakes));
     this.stat(688, 'RESTAM', String(s.remaining));
+
+    // linha de baixo: novo puzzle, opções (e mover a mesa no AR)
+    const bottom = (y, h, accentNew) => {
+      const wNew = s.ar ? 380 : 600, wOpt = s.ar ? 270 : 324;
+      this.button('new', 40, y, wNew, h, 'NOVO PUZZLE', accentNew, { size: 36 });
+      this.button('options', 60 + wNew, y, wOpt, h, 'OPÇÕES', null, { size: 36 });
+      if (s.ar) this.button('move', 80 + wNew + wOpt, y, W - 120 - wNew - wOpt, h, 'MOVER', null, { size: 36 });
+    };
 
     if (s.solved) {
       g.textAlign = 'center';
@@ -103,14 +115,13 @@ export class Panel {
       for (let i = 0; i < 3; i++) star(g, W / 2 - 110 + i * 110, 450, 46, i < s.stars);
       g.fillStyle = 'rgba(244,239,230,0.7)'; g.font = '500 30px system-ui, sans-serif';
       g.fillText('A forma foi revelada. Gire para admirar!', W / 2, 532);
-      const solvedNewW = s.ar ? W - 80 - 280 : W - 80;
-      this.button('new', 40, 590, solvedNewW, 120, 'NOVO PUZZLE', { base: '#ffc38a', hover: '#ffd6ad', text: '#1b1a26' });
-      if (s.ar) this.button('move', W - 300, 590, 260, 120, 'MOVER', null, { size: 38 });
+      bottom(590, 120, { base: '#ffc38a', hover: '#ffd6ad', text: '#1b1a26' });
     } else {
       const breaking = s.mode === 'break';
-      this.button('mode', 40, 262, W - 80, 120, breaking ? 'MODO: QUEBRAR' : 'MODO: PINTAR',
+      this.button('mode', 40, 262, 704, 120, breaking ? 'MODO: QUEBRAR' : 'MODO: PINTAR',
         breaking ? { base: '#ff9a62', hover: '#ffb48a', text: '#24140c' } : { base: '#6fb2ff', hover: '#97c8ff', text: '#0c1a2c' },
         { size: 46, weight: 800 });
+      this.button('undo', 764, 262, 220, 120, 'DESFAZER', s.canUndo ? null : DISABLED, { size: 32 });
       const axisName = ['X', 'Y', 'Z'][s.sliceAxis];
       const palm = s.palmActive ? { base: '#7fe3ff', hover: '#a6ecff', text: '#06202c' } : null;
       this.button('axis', 40, 406, 330, 110, `CORTE ${axisName}${s.sliceSign > 0 ? '+' : '−'}`, palm);
@@ -118,11 +129,33 @@ export class Panel {
       g.fillStyle = '#f4efe6'; g.font = '800 46px system-ui, sans-serif'; g.textAlign = 'center';
       g.fillText(`${s.sliceDepth}/${s.sliceMax}`, 662, 463);
       this.button('plus', 784, 406, 200, 110, '+', null, { size: 64 });
-      this.button('new', 40, 540, s.ar ? W - 80 - 280 : W - 80, 96, 'NOVO PUZZLE', null, { size: 36 });
-      if (s.ar) this.button('move', W - 300, 540, 260, 96, 'MOVER', null, { size: 36 });
+      bottom(540, 96, null);
       g.fillStyle = 'rgba(244,239,230,0.55)'; g.font = '500 22px system-ui, sans-serif'; g.textAlign = 'center';
       g.fillText(s.hint, W / 2, 690);
     }
     this.tex.needsUpdate = true;
+  }
+
+  // linha de opções: rótulo à esquerda, escolhas à direita (a selecionada fica destacada)
+  optionRow(y, label, items, selected) {
+    const g = this.g;
+    g.fillStyle = '#f4efe6'; g.font = '600 32px system-ui, sans-serif'; g.textAlign = 'left';
+    g.fillText(label, 48, y + 46);
+    const x0 = 400, gap = 14, w = (W - 40 - x0 - gap * (items.length - 1)) / items.length;
+    items.forEach(([id, text], i) => this.button(id, x0 + i * (w + gap), y, w, 92, text, id === selected ? SELECTED : null, { size: 30 }));
+  }
+
+  drawOptions(s) {
+    const g = this.g;
+    const o = s.settings;
+    this.optionRow(124, 'Tamanho', [['size:4', '4'], ['size:5', '5'], ['size:6', '6'], ['size:7', '7']], `size:${o.size}`);
+    this.optionRow(232, 'Dificuldade', [['diff:easy', 'FÁCIL'], ['diff:normal', 'NORMAL'], ['diff:hard', 'DIFÍCIL']], `diff:${o.diff}`);
+    this.optionRow(340, 'Mão dominante', [['hand:right', 'DESTRO'], ['hand:left', 'CANHOTO']], `hand:${o.hand}`);
+    this.optionRow(448, 'Símbolos (cores)', [['symbols:off', 'DESLIGADO'], ['symbols:on', 'LISTRAS']], `symbols:${o.symbols ? 'on' : 'off'}`);
+    this.button('daily', 40, 570, 330, 96, 'PUZZLE DO DIA', s.daily ? SELECTED : null, { size: 30 });
+    this.button('recenter', 390, 570, 330, 96, 'RECENTRALIZAR', null, { size: 30 });
+    this.button('back', 740, 570, 244, 96, 'VOLTAR', { base: '#ffc38a', hover: '#ffd6ad', text: '#1b1a26' }, { size: 32 });
+    g.fillStyle = 'rgba(244,239,230,0.55)'; g.font = '500 22px system-ui, sans-serif'; g.textAlign = 'center';
+    g.fillText('Tamanho e dificuldade valem a partir do próximo puzzle.', W / 2, 702);
   }
 }

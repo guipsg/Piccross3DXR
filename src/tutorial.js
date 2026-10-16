@@ -98,7 +98,7 @@ export class Tutorial {
     if (!this.active) return;
     if (STEPS[this.step]?.id === 'rotate' && anchorQ.angleTo(this.rotStart) > 1.0) this.next();
     if (this.step === STEPS.length && performance.now() / 1000 - this.doneAt > 4) { this.finish(); this.mesh.visible = false; return; }
-    const key = `${this.step}|${inputKind}|${this.hover}`;
+    const key = `${this.step}|${inputKind}|${this.hover}|${this.leftHanded}`;
     if (key !== this.key) { this.key = key; this.draw(inputKind); }
   }
 
@@ -140,7 +140,10 @@ export class Tutorial {
     g.fillStyle = '#ffffff'; g.font = '800 52px system-ui, sans-serif';
     g.fillText(s.title, 48, 140);
     g.fillStyle = 'rgba(244,239,230,0.88)'; g.font = '500 36px system-ui, sans-serif';
-    wrap(g, s[inputKind] ?? s.desktop, W - 96).slice(0, 2).forEach((l, i) => g.fillText(l, 48, 210 + i * 48));
+    let text = s[inputKind] ?? s.desktop;
+    // canhoto: as mãos trocam de papel
+    if (inputKind === 'hands' && this.leftHanded) text = text.replace('DIREITA', '#').replace('ESQUERDA', 'DIREITA').replace('#', 'ESQUERDA');
+    wrap(g, text, W - 96).slice(0, 2).forEach((l, i) => g.fillText(l, 48, 210 + i * 48));
     this.tex.needsUpdate = true;
   }
 }

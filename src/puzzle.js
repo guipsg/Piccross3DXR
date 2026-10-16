@@ -35,13 +35,19 @@ function masksFor(n) {
 }
 
 export class Puzzle {
-  constructor(seed, nx = 5, ny = 5, nz = 5) {
+  // hideRatio: fração das dicas que o gerador tenta esconder, sem perder a solução única.
+  // Com hideRatio >= 1 (difícil) esconde o máximo possível e, entre alguns candidatos,
+  // fica com o que exige mais rodadas de dedução do solver.
+  constructor(seed, nx = 5, ny = 5, nz = 5, hideRatio = 0.4) {
     this.seed = seed;
+    this.hideRatio = hideRatio;
     this.nx = nx; this.ny = ny; this.nz = nz;
     this.N = nx * ny * nz;
     this.buildLines();
     const r = rng(seed);
-    for (let attempt = 0; attempt < 2000; attempt++) {
+    const wanted = hideRatio >= 1 ? 5 : 1;
+    let best = null;
+    for (let attempt = 0, found = 0; attempt < 2000 && found < wanted; attempt++) {
       const sol = this.makeShape(r);
       if (!sol) continue;
       this.solution = sol;
@@ -49,12 +55,17 @@ export class Puzzle {
       const grouped = full.filter((c) => c.type > 0).length / full.length;
       if (grouped < 0.14 || grouped > 0.4) continue;
       if (!this.solve(full)) continue;
-      this.clues = this.hideClues(full, r);
-      this.makeColors(r);
-      this.solidCount = sol.reduce((a, b) => a + b, 0);
-      return;
+      const clues = this.hideClues(full, r);
+      this.solve(clues);
+      found++;
+      if (!best || this.rounds > best.rounds) best = { solution: sol, clues, rounds: this.rounds };
     }
-    throw new Error('Falha ao gerar puzzle');
+    if (!best) throw new Error('Falha ao gerar puzzle');
+    this.solution = best.solution;
+    this.clues = best.clues;
+    this.rounds = best.rounds;
+    this.makeColors(r);
+    this.solidCount = this.solution.reduce((a, b) => a + b, 0);
   }
 
   idx(x, y, z) { return x + this.nx * (y + this.ny * z); }
@@ -167,8 +178,10 @@ export class Puzzle {
   solve(clues) {
     const state = new Int8Array(this.N).fill(-1);
     let changed = true;
+    this.rounds = 0; // passadas completas pelas linhas até concluir (medida de dificuldade)
     while (changed) {
       changed = false;
+      this.rounds++;
       for (let l = 0; l < this.lines.length; l++) {
         const { cells } = this.lines[l];
         const n = cells.length, full = (1 << n) - 1;
@@ -196,7 +209,7 @@ export class Puzzle {
   hideClues(full, r) {
     const clues = full.slice();
     const order = [...clues.keys()].sort(() => r() - 0.5);
-    const target = Math.floor(clues.length * 0.55);
+    const target = Math.floor(clues.length * this.hideRatio);
     let hidden = 0;
     for (const l of order) {
       if (hidden >= target) break;
